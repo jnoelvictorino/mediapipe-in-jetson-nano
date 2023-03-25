@@ -1,0 +1,67 @@
+FROM nvcr.io/nvidia/l4t-ml:r32.7.1-py3 as builder
+# RUN ln -fs /usr/bin/python3 /usr/bin/python
+
+# RUN apt-get update \
+# && apt-get install -y libhdf5-serial-dev hdf5-tools libhdf5-dev zlib1g-dev zip libjpeg8-dev liblapack-dev libblas-dev gfortran
+# RUN apt-get install -y python3-pip
+
+RUN pip3 install -U pip testresources setuptools==49.6.0 wheel
+RUN pip3 install -U --no-deps numpy==1.19.4 future==0.18.2 \
+  mock==3.0.5 keras_preprocessing==1.1.2 keras_applications==1.0.8 \
+  gast==0.4.0 protobuf pybind11 cython pkgconfig
+# RUN env H5PY_SETUP_REQUIRES=0 pip3 install -U h5py==3.1.0
+# RUN apt-get -y install python3-opencv && apt-get -y remove python3-opencv
+
+RUN apt-get update \
+  && apt-get install -y libopencv-core-dev libopencv-highgui-dev \
+  libopencv-calib3d-dev libopencv-features2d-dev libopencv-imgproc-dev \
+  libopencv-video-dev
+
+RUN git clone --verbose -b v0.8.5 https://github.com/google/mediapipe.git
+
+RUN cd /mediapipe \
+  && sed -i -e "/\"imgcodecs\"/d;/\"calib3d\"/d;/\"features2d\"/d;/\"highgui\"/d;/\"video\"/d;/\"videoio\"/d" third_party/BUILD \
+  && sed -i -e "/-ljpeg/d;/-lpng/d;/-ltiff/d;/-lImath/d;/-lIlmImf/d;/-lHalf/d;/-lIex/d;/-lIlmThread/d;/-lrt/d;/-ldc1394/d;/-lavcodec/d;/-lavformat/d;/-lavutil/d;/-lswscale/d;/-lavresample/d" third_party/BUILD \
+  && sed -i 's/"WITH_WEBP": "OFF",/"WITH_WEBP": "OFF",\n\t"ENABLE_NEON": "OFF",\n\t"WITH_TENGINE": "OFF",/g' third_party/BUILD \
+  && chmod 744 setup_opencv.sh
+
+ADD setup_opencv.sh /mediapipe/setup_opencv.sh
+RUN cd /mediapipe && chmod 744 setup_opencv.sh \
+  && ./setup_opencv.sh
+
+# RUN pip3 install --verbose git+https://github.com/opencv/opencv-python.git
+# Got this from mediapipe's requirements.txt
+RUN pip install --verbose opencv_contrib_python==3.4.18.65 
+RUN git clone https://github.com/PINTO0309/mediapipe-bin
+RUN cd /mediapipe-bin \
+  && apt-get install -y curl unzip \
+  && ./v0.8.5/download.sh \
+  && unzip v0.8.5.zip \
+  && cd ./v0.8.5/numpy119x/py36 \
+  && pip3 install --verbose mediapipe-0.8.5_cuda102-cp36-cp36m-linux_aarch64.whl \
+  && pip3 install dataclasses
+
+
+# Reference: jetson-containers/Dockerfile.ml
+FROM nvcr.io/nvidia/l4t-ml:r32.7.1-py3
+#
+# apt packages
+#
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+  mesa-utils \
+  libgl1-mesa-glx \
+  libgl1-mesa-dri \
+  libgl1-mesa-dev \
+  libglu1-mesa-dev \
+  libglu1-mesa \
+  && rm -rf /var/lib/apt/lists/* \
+  && apt-get clean
+
+#
+# pull libaries from builder stage
+#
+COPY --from=builder /usr/include/opencv2 /usr/local/include/opencv2
+COPY --from=builder /usr/local/lib/libopencv* /usr/local/lib/
+COPY --from=builder /usr/local/lib/python3.6/dist-packages/opencv_contrib_python-3.4.18.65.dist-info /usr/local/lib/python3.6/dist-packages/opencv_contrib_python-3.4.18.65.dist-info 
+COPY --from=builder /usr/local/lib/python3.6/dist-packages/mediapipe /usr/local/lib/python3.6/dist-packages/mediapipe
